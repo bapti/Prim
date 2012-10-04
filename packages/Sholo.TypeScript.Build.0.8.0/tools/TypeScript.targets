@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <CompileTypeScript Condition="'$(CompileTypeScript)' == ''">true</CompileTypeScript>
+        <TypeScriptPath>$(PROGRAMFILES)\Microsoft SDKs\TypeScript\0.8.0.0\</TypeScriptPath>
+        <TypeScriptCompilerPath Condition="'$(TypeScriptCompilerPath)'==''">$(TypeScriptPath)tsc.exe</TypeScriptCompilerPath>
+        <TypeScriptSingleOutputFile Condition="'$(TypeScriptSingleOutputFile)'==''">$(ProjectDir)Scripts\app.ts.js</TypeScriptSingleOutputFile>
+        <UseSingleOutputFile Condition="'$(UseSingleOutputFile)'!='true'">false</UseSingleOutputFile>
+    </PropertyGroup>
+    <PropertyGroup>
+      <BuildDependsOn Condition="$(CompileTypeScript) == 'true'">
+        BuildTypeScript;
+        $(BuildDependsOn);
+      </BuildDependsOn>
+    </PropertyGroup>
+    <Target Name="BuildTypeScript">
+        <TypeScriptCompile 
+            ExePath="$(TypeScriptCompilerPath)" 
+            InputFiles="@(TypeScriptCompile)" 
+            EmitComments="true" 
+            GenerateDeclarations="true" 
+            ModuleKind="commonjs" 
+            ExcludeGlobalDeclarations="false" 
+            Target="ES5" 
+            SingleOutputFile="$(TypeScriptSingleOutputFile)"
+            Condition="'$(UseSingleOutputFile)'=='true'" />
+        <TypeScriptCompile 
+            ExePath="$(TypeScriptCompilerPath)" 
+            InputFiles="@(TypeScriptCompile)" 
+            EmitComments="true" 
+            GenerateDeclarations="true" 
+            ModuleKind="commonjs" 
+            ExcludeGlobalDeclarations="false" 
+            Target="ES5"
+            Condition="'$(UseSingleOutputFile)'=='false'" />
+    </Target>
+    <UsingTask TaskName="TypeScriptCompile" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll" >
+      <ParameterGroup>
+        <ExePath ParameterType="System.String" Required="true" />
+        <InputFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+        <SingleOutputFile ParameterType="System.String" />
+        <EmitComments ParameterType="System.Boolean" />
+        <GenerateDeclarations ParameterType="System.Boolean" />
+        <ModuleKind ParameterType="System.String" />
+        <Target ParameterType="System.String" />
+        <ExcludeGlobalDeclarations ParameterType="System.Boolean" />
+      </ParameterGroup>
+      <Task>
+        <Reference Include="$(MSBuildToolsPath)\Microsoft.Build.Framework.dll"/>
+        <Reference Include="$(MSBuildToolsPath)\Microsoft.Build.Utilities.v4.0.dll"/>
+        <Using Namespace="System" />
+        <Using Namespace="System.Diagnostics" />
+        <Using Namespace="System.Linq" />
+        <Using Namespace="System.Text" />
+        <Using Namespace="System.Text.RegularExpressions" />
+        <Using Namespace="Microsoft.Build.Framework" />
+        <Using Namespace="Microsoft.Build.Utilities" />
+        <Code Type="Fragment" Language="cs">
+            <![CDATA[
+            var args = new StringBuilder();
+
+            if (EmitComments)
+            {
+                args.Append("--comments ");
+            }
+
+            if (GenerateDeclarations)
+            {
+                args.Append("--declarations ");
+            }
+
+            if (!string.IsNullOrEmpty(ModuleKind))
+            {
+                if (ModuleKind.Equals("commonjs") || ModuleKind.Equals("amd"))
+                {
+                    args.AppendFormat("--module {0} ", ModuleKind);
+                }
+                else
+                {
+                    Log.LogError("The TypeScript Compiler ModuleKind specified ({0}) is invalid.  Expecting commonjs or amd.", ModuleKind);
+                }
+            }
+            
+            if (!string.IsNullOrEmpty(SingleOutputFile))
+            {
+                args.AppendFormat("--out {0} ", SingleOutputFile);
+            }
+
+            if (!string.IsNullOrEmpty(Target))
+            {
+                if (Target.Equals("ES3") || Target.Equals("ES5"))
+                {
+                    args.AppendFormat("--target {0} ", Target);
+                }
+                else
+                {
+                    Log.LogError("The TypeScript Compiler target specified ({0}) is invalid.  Expecting ES3 or ES5.", Target);
+                }
+            }
+
+            if (ExcludeGlobalDeclarations)
+            {
+                args.AppendFormat("--nolib ");
+            }
+
+            args.Append(string.Join(" ", InputFiles.Select(x => x.GetMetadata("FullPath")).ToArray()) + " ");
+
+            var result = true;
+
+            var psi = new ProcessStartInfo
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                FileName = ExePath,
+                Arguments = args.ToString()
+            };
+
+            using (var p = new Process())
+            {
+                p.StartInfo = psi;
+                p.Start();
+                p.WaitForExit();
+
+                string input;
+                while ((input = p.StandardError.ReadLine()) != null)
+                {
+                    var match = Regex.Match(input, @"^(?<Filename>.+)\((?<Line>\d+),(?<Column>\d+)\)\:\s(?<Message>.+)$");
+
+                    if (match.Success &&
+                        match.Groups["Filename"] != null && match.Groups["Filename"].Success &&
+                        match.Groups["Line"] != null && match.Groups["Line"].Success &&
+                        match.Groups["Column"] != null && match.Groups["Column"].Success &&
+                        match.Groups["Message"] != null && match.Groups["Message"].Success)
+                    {
+                        var filename = match.Groups["Filename"].Value.Replace("/", @"\");
+                        var lineString = match.Groups["Line"].Value;
+                        var columnString = match.Groups["Column"].Value;
+                        var message = match.Groups["Message"].Value;
+
+                        int line, column;
+                        if (int.TryParse(lineString, out line) && int.TryParse(columnString, out column))
+                        {
+                            Log.LogError(null, null, null, filename, line, column + 1, 0, 0, message);
+                        }
+                    }
+                }
+            }
+            ]]>
+        </Code>
+      </Task>
+    </UsingTask>
+</Project>
